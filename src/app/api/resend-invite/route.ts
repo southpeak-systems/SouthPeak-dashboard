@@ -2,12 +2,10 @@ import { createClient } from '@supabase/supabase-js'
 import { Resend } from 'resend'
 import { NextResponse } from 'next/server'
 
-const ADMIN_EMAIL = 'bgordon@southpeak-systems.com'
-const FROM_EMAIL = 'bgordon@southpeak-systems.com'
-// SITE_URL is a server-side-only env var (no NEXT_PUBLIC_ prefix) so it is
-// read at runtime per environment rather than baked in at build time.
-// Set this in Vercel's Environment Variables dashboard.
-const SITE_URL = process.env.SITE_URL ?? process.env.NEXT_PUBLIC_SITE_URL ?? ''
+const ADMIN_EMAIL   = 'bgordon@southpeak-systems.com'
+const FROM_EMAIL    = 'bgordon@southpeak-systems.com'
+const TEMP_PASSWORD = 'TempPass123!'
+const DASHBOARD_URL = 'https://south-peak-dashboard-o6nml20nh-southpeak-systems-projects.vercel.app'
 
 export async function POST(request: Request) {
   // ── Auth check ───────────────────────────────────────────────
@@ -42,77 +40,71 @@ export async function POST(request: Request) {
   }
 
   const normalizedEmail = client_email.trim().toLowerCase()
-  const clientName = (business_name ?? '').trim() || 'there'
+  const clientName      = (business_name ?? '').trim() || 'there'
 
-  // ── Ensure auth user exists ───────────────────────────────────
+  // ── Find or create the auth user ─────────────────────────────
   const { data: { users } } = await serviceClient.auth.admin.listUsers({ perPage: 1000 })
-  const targetUser = users?.find(
+  const existingUser = users?.find(
     (u) => (u.email ?? '').toLowerCase() === normalizedEmail
   )
 
-  if (!targetUser) {
-    const tempPassword =
-      Math.random().toString(36).slice(-8) +
-      Math.random().toString(36).slice(-4).toUpperCase() +
-      '!9'
-
+  if (existingUser) {
+    // Reset password back to temp so the credentials email is valid
+    const { error: resetError } = await serviceClient.auth.admin.updateUserById(
+      existingUser.id,
+      { password: TEMP_PASSWORD }
+    )
+    if (resetError) {
+      console.error('[resend-invite] Could not reset password:', resetError.message)
+      return NextResponse.json({ error: resetError.message }, { status: 500 })
+    }
+    console.log(`[resend-invite] Password reset to temp for user: ${existingUser.id}`)
+  } else {
+    // No auth account yet — create one
     const { error: createError } = await serviceClient.auth.admin.createUser({
-      email: normalizedEmail,
-      password: tempPassword,
+      email:         normalizedEmail,
+      password:      TEMP_PASSWORD,
       email_confirm: true,
     })
-
     if (createError) {
       return NextResponse.json(
         { error: `Could not create auth account: ${createError.message}` },
         { status: 500 }
       )
     }
-    console.log(`[resend-invite] Created missing auth user for ${normalizedEmail}`)
+    console.log(`[resend-invite] Created new auth user for ${normalizedEmail}`)
   }
 
-  // ── Generate password-reset link ─────────────────────────────
-  const { data: linkData, error: linkError } =
-    await serviceClient.auth.admin.generateLink({
-      type: 'recovery',
-      email: normalizedEmail,
-      options: {
-        redirectTo: `${SITE_URL}/update-password`,
-      },
-    })
-
-  if (linkError) {
-    console.error('[resend-invite] generateLink error:', linkError.message)
-    return NextResponse.json({ error: linkError.message }, { status: 500 })
-  }
-
-  const resetLink = linkData?.properties?.action_link ?? `${SITE_URL}/login?role=client`
-  console.log(`[resend-invite] Reset link generated for ${normalizedEmail}`)
-
-  // ── Send login email via Resend ──────────────────────────────
-  const apiKey = process.env.RESEND_API_KEY
-  console.log(`[resend-invite] RESEND_API_KEY present: ${!!apiKey}, length: ${apiKey?.length ?? 0}`)
-  console.log(`[resend-invite] Sending email to: ${normalizedEmail} from: ${FROM_EMAIL}`)
-
-  const resend = new Resend(apiKey)
+  // ── Resend credentials email via Resend ───────────────────────
+  const resend = new Resend(process.env.RESEND_API_KEY)
 
   const { data: emailData, error: emailError } = await resend.emails.send({
-    from: FROM_EMAIL,
-    to: normalizedEmail,
-    subject: 'Welcome to SouthPeak Systems',
+    from:    FROM_EMAIL,
+    to:      normalizedEmail,
+    subject: 'Your SouthPeak Systems Login Credentials',
     html: `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; color: #111;">
-        <h2 style="margin-top: 0;">Welcome to SouthPeak Systems</h2>
+        <h2 style="margin-top: 0;">Your Dashboard Login</h2>
         <p>Hi ${clientName},</p>
-        <p>Your account has been created. Click the button below to set your password and access your dashboard:</p>
+        <p>Here are your SouthPeak Systems dashboard login credentials:</p>
+
+        <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 20px; margin: 24px 0;">
+          <p style="margin: 0 0 8px; font-size: 14px;"><strong>Login URL:</strong><br>
+            <a href="${DASHBOARD_URL}/login?role=client" style="color: #3b82f6;">${DASHBOARD_URL}/login?role=client</a>
+          </p>
+          <p style="margin: 8px 0 8px; font-size: 14px;"><strong>Email:</strong> ${normalizedEmail}</p>
+          <p style="margin: 8px 0 0; font-size: 14px;"><strong>Password:</strong> ${TEMP_PASSWORD}</p>
+        </div>
+
+        <p>After logging in, you can change your password at any time from the <strong>Settings</strong> page in your dashboard.</p>
+
         <p style="margin: 28px 0;">
-          <a href="${resetLink}"
+          <a href="${DASHBOARD_URL}/login?role=client"
              style="background: #3b82f6; color: #fff; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: 600; display: inline-block;">
-            Set My Password
+            Go to Dashboard
           </a>
         </p>
-        <p>Or copy and paste this link into your browser:</p>
-        <p style="word-break: break-all; color: #3b82f6;">${resetLink}</p>
+
         <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 28px 0;" />
         <p style="color: #6b7280; font-size: 14px;">
           If you have any questions, contact us at
@@ -123,8 +115,11 @@ export async function POST(request: Request) {
     `,
     text:
       `Hi ${clientName},\n\n` +
-      `Your account has been created. Click the link below to set your password and access your dashboard:\n\n` +
-      `${resetLink}\n\n` +
+      `Here are your SouthPeak Systems dashboard login credentials:\n\n` +
+      `Login URL: ${DASHBOARD_URL}/login?role=client\n` +
+      `Email: ${normalizedEmail}\n` +
+      `Password: ${TEMP_PASSWORD}\n\n` +
+      `After logging in, you can change your password from the Settings page.\n\n` +
       `If you have any questions, contact us at bgordon@southpeak-systems.com.\n\n` +
       `— The SouthPeak Systems Team`,
   })
@@ -132,12 +127,11 @@ export async function POST(request: Request) {
   console.log(`[resend-invite] Resend response — data: ${JSON.stringify(emailData)}, error: ${JSON.stringify(emailError)}`)
 
   if (emailError) {
-    const errMsg = (emailError as { message?: string; name?: string; statusCode?: number }).message
-      ?? JSON.stringify(emailError)
-    console.error('[resend-invite] Resend error detail:', JSON.stringify(emailError))
+    const errMsg = (emailError as { message?: string }).message ?? JSON.stringify(emailError)
+    console.error('[resend-invite] Resend error:', errMsg)
     return NextResponse.json({ error: errMsg }, { status: 500 })
   }
 
-  console.log(`[resend-invite] Email sent to ${normalizedEmail}. Resend ID: ${emailData?.id}`)
+  console.log(`[resend-invite] Credentials email sent to ${normalizedEmail}. Resend ID: ${emailData?.id}`)
   return NextResponse.json({ success: true })
 }

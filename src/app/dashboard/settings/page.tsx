@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase-server'
 import { redirect } from 'next/navigation'
 import { formatPhone } from '@/lib/utils'
+import ChangePasswordForm from '@/components/ChangePasswordForm'
 
 function Field({ label, value }: { label: string; value: string | null | undefined }) {
   return (
@@ -125,6 +126,8 @@ export default async function SettingsPage() {
           </p>
         </div>
       </div>
+
+      <ChangePasswordForm />
     </div>
   )
 }

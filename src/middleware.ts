@@ -49,9 +49,8 @@ export async function middleware(request: NextRequest) {
     return supabaseResponse
   }
 
-  // Password update page — must be public so the recovery token in the
-  // URL hash can be exchanged client-side before any session cookie exists.
-  if (pathname.startsWith('/update-password')) {
+  // Access denied — public so signed-out users can read the message.
+  if (pathname.startsWith('/access-denied')) {
     return supabaseResponse
   }
 

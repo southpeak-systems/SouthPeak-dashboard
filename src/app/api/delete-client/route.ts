@@ -34,7 +34,19 @@ export async function DELETE(request: Request) {
     return NextResponse.json({ error: 'business_id is required' }, { status: 400 })
   }
 
-  // ── Delete conversations first (foreign key) ─────────────────
+  // ── Fetch business to get client email (for auth user lookup) ─
+  const { data: business, error: fetchError } = await serviceClient
+    .from('businesses')
+    .select('client_email, auth_user_id')
+    .eq('id', business_id)
+    .single()
+
+  if (fetchError || !business) {
+    console.error('[delete-client] Could not fetch business:', fetchError?.message)
+    return NextResponse.json({ error: fetchError?.message ?? 'Business not found' }, { status: 404 })
+  }
+
+  // ── Delete conversations first (foreign key constraint) ──────
   const { error: convDeleteError } = await serviceClient
     .from('conversations')
     .delete()
@@ -45,7 +57,7 @@ export async function DELETE(request: Request) {
     return NextResponse.json({ error: convDeleteError.message }, { status: 500 })
   }
 
-  // ── Delete the business ──────────────────────────────────────
+  // ── Delete the business row ──────────────────────────────────
   const { error: bizDeleteError } = await serviceClient
     .from('businesses')
     .delete()
@@ -57,5 +69,31 @@ export async function DELETE(request: Request) {
   }
 
   console.log(`[delete-client] Deleted business ${business_id} and its conversations.`)
+
+  // ── Delete the Supabase auth user so they can no longer log in ─
+  // Resolve the auth user ID: prefer the stored auth_user_id, fall back to
+  // a lookup by email in case the column was never populated.
+  let authUserId: string | null = business.auth_user_id ?? null
+
+  if (!authUserId && business.client_email) {
+    const { data: { users } } = await serviceClient.auth.admin.listUsers({ perPage: 1000 })
+    const match = users?.find(
+      (u) => (u.email ?? '').toLowerCase() === business.client_email.toLowerCase()
+    )
+    authUserId = match?.id ?? null
+  }
+
+  if (authUserId) {
+    const { error: authDeleteError } = await serviceClient.auth.admin.deleteUser(authUserId)
+    if (authDeleteError) {
+      // Non-fatal: the business data is gone; log but don't fail the request.
+      console.warn('[delete-client] Could not delete auth user:', authDeleteError.message)
+    } else {
+      console.log(`[delete-client] Deleted auth user ${authUserId}.`)
+    }
+  } else {
+    console.warn('[delete-client] No auth user found to delete for business', business_id)
+  }
+
   return NextResponse.json({ success: true })
 }
