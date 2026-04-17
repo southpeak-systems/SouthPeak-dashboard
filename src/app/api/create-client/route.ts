@@ -4,7 +4,10 @@ import { NextResponse } from 'next/server'
 
 const ADMIN_EMAIL = 'bgordon@southpeak-systems.com'
 const FROM_EMAIL = 'bgordon@southpeak-systems.com'
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? ''
+// SITE_URL is a server-side-only env var (no NEXT_PUBLIC_ prefix) so it is
+// read at runtime per environment rather than baked in at build time.
+// Set this in Vercel's Environment Variables dashboard.
+const SITE_URL = process.env.SITE_URL ?? process.env.NEXT_PUBLIC_SITE_URL ?? ''
 
 export async function POST(request: Request) {
   // ── Auth check ───────────────────────────────────────────────
