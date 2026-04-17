@@ -2,10 +2,9 @@ import { createClient } from '@supabase/supabase-js'
 import { Resend } from 'resend'
 import { NextResponse } from 'next/server'
 
-const ADMIN_EMAIL    = 'bgordon@southpeak-systems.com'
-const FROM_EMAIL     = 'bgordon@southpeak-systems.com'
-const TEMP_PASSWORD  = 'TempPass123!'
-const DASHBOARD_URL  = 'https://south-peak-dashboard-o6nml20nh-southpeak-systems-projects.vercel.app'
+const ADMIN_EMAIL   = 'bgordon@southpeak-systems.com'
+const FROM_EMAIL    = 'bgordon@southpeak-systems.com'
+const DASHBOARD_URL = 'https://south-peak-dashboard-o6nml20nh-southpeak-systems-projects.vercel.app'
 
 export async function POST(request: Request) {
   // ── Auth check ───────────────────────────────────────────────
@@ -45,6 +44,9 @@ export async function POST(request: Request) {
   const normalizedEmail = client_email.trim().toLowerCase()
   const clientName      = (business_name ?? '').trim() || 'there'
 
+  // ── Generate a unique temp password ──────────────────────────
+  const tempPassword = 'SP' + Math.random().toString(36).slice(-6).toUpperCase() + '!1'
+
   // ── Create or find auth user ─────────────────────────────────
   const { data: { users } } = await serviceClient.auth.admin.listUsers({ perPage: 1000 })
   const existingUser = users?.find(
@@ -54,17 +56,20 @@ export async function POST(request: Request) {
   let userId: string
 
   if (existingUser) {
-    // Reset to temp password so the credentials email is always valid
-    await serviceClient.auth.admin.updateUserById(existingUser.id, {
-      password: TEMP_PASSWORD,
+    const { error: resetError } = await serviceClient.auth.admin.updateUserById(existingUser.id, {
+      password: tempPassword,
     })
+    if (resetError) {
+      console.error('[create-client] Could not reset password:', resetError.message)
+      return NextResponse.json({ error: resetError.message }, { status: 500 })
+    }
     userId = existingUser.id
     console.log(`[create-client] Reset password for existing user: ${userId}`)
   } else {
     const { data: newUser, error: createError } =
       await serviceClient.auth.admin.createUser({
         email:         normalizedEmail,
-        password:      TEMP_PASSWORD,
+        password:      tempPassword,
         email_confirm: true,
       })
 
@@ -95,7 +100,7 @@ export async function POST(request: Request) {
   const { data: emailData, error: emailError } = await resend.emails.send({
     from:    FROM_EMAIL,
     to:      normalizedEmail,
-    subject: 'Welcome to SouthPeak Systems — Your Login Credentials',
+    subject: 'Welcome to SouthPeak Systems - Your Login Info',
     html: `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; color: #111;">
         <h2 style="margin-top: 0;">Welcome to SouthPeak Systems</h2>
@@ -104,16 +109,16 @@ export async function POST(request: Request) {
 
         <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 20px; margin: 24px 0;">
           <p style="margin: 0 0 8px; font-size: 14px;"><strong>Login URL:</strong><br>
-            <a href="${DASHBOARD_URL}/login?role=client" style="color: #3b82f6;">${DASHBOARD_URL}/login?role=client</a>
+            <a href="${DASHBOARD_URL}/login" style="color: #3b82f6;">${DASHBOARD_URL}/login</a>
           </p>
           <p style="margin: 8px 0 8px; font-size: 14px;"><strong>Email:</strong> ${normalizedEmail}</p>
-          <p style="margin: 8px 0 0; font-size: 14px;"><strong>Temporary Password:</strong> ${TEMP_PASSWORD}</p>
+          <p style="margin: 8px 0 0; font-size: 14px;"><strong>Temporary Password:</strong> ${tempPassword}</p>
         </div>
 
         <p>Please log in and change your password after your first login using the <strong>Settings</strong> page in your dashboard.</p>
 
         <p style="margin: 28px 0;">
-          <a href="${DASHBOARD_URL}/login?role=client"
+          <a href="${DASHBOARD_URL}/login"
              style="background: #3b82f6; color: #fff; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: 600; display: inline-block;">
             Go to Dashboard
           </a>
@@ -130,9 +135,9 @@ export async function POST(request: Request) {
     text:
       `Hi ${clientName},\n\n` +
       `Your dashboard account has been created. Here are your login credentials:\n\n` +
-      `Login URL: ${DASHBOARD_URL}/login?role=client\n` +
+      `Login URL: ${DASHBOARD_URL}/login\n` +
       `Email: ${normalizedEmail}\n` +
-      `Temporary Password: ${TEMP_PASSWORD}\n\n` +
+      `Temporary Password: ${tempPassword}\n\n` +
       `Please log in and change your password after your first login using the Settings page.\n\n` +
       `If you have any questions, contact us at bgordon@southpeak-systems.com.\n\n` +
       `— The SouthPeak Systems Team`,
